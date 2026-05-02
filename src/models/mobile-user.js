@@ -1,18 +1,17 @@
-const mongoose = require('mongoose');
+const { registerModel, DataTypes, Op } = require('../config/db');
 
-const userSchema = new mongoose.Schema({
-  name: { type: String },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  username: { type: String, unique: true, sparse: true },
-  phone: { type: String },
-  // ...existing fields...
-}, { timestamps: true });
+// Define MobileUser model
+const MobileUser = registerModel('MobileUser', {
+  name: DataTypes.STRING,
+  email: { type: DataTypes.STRING, allowNull: false, unique: true },
+  password: { type: DataTypes.STRING, allowNull: false },
+  username: { type: DataTypes.STRING, unique: true },
+  phone: DataTypes.STRING
+}, {
+  timestamps: true,
+  indexes: [
+    { unique: true, fields: ['username'], where: { username: { [Op.ne]: null } } }
+  ]
+});
 
-// also create explicit partial index (safer)
-userSchema.index(
-  { username: 1 },
-  { unique: true, partialFilterExpression: { username: { $exists: true, $ne: null } } }
-);
-
-module.exports = mongoose.model('MobileUser', userSchema);
+module.exports = MobileUser;

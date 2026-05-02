@@ -1,14 +1,19 @@
-const mongoose = require('mongoose');
+const { registerModel, DataTypes } = require('../config/db');
 
-const ChatMessageSchema = new mongoose.Schema({
-  conversationId: { type: String, index: true },
-  from: { type: String, required: true }, // user id or 'bot' or facility id
-  to: { type: String }, // recipient id
-  text: { type: String },
-  attachments: { type: [String], default: [] },
-  meta: { type: mongoose.Schema.Types.Mixed, default: {} },
-  read: { type: Boolean, default: false },
-  createdAt: { type: Date, default: Date.now }
+// Define ChatMessage model
+const ChatMessage = registerModel('ChatMessage', {
+  conversationId: { type: DataTypes.STRING },
+  from: { type: DataTypes.STRING, allowNull: false }, // user id or 'bot' or facility id
+  to: DataTypes.STRING, // recipient id
+  text: DataTypes.STRING,
+  attachments: { type: DataTypes.JSON, defaultValue: [] },
+  meta: { type: DataTypes.JSON, defaultValue: {} },
+  read: { type: DataTypes.BOOLEAN, defaultValue: false },
+  createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
+}, {
+  indexes: [
+    { fields: ['conversationId'] }
+  ]
 });
 
-module.exports = mongoose.model('ChatMessage', ChatMessageSchema);
+module.exports = ChatMessage;

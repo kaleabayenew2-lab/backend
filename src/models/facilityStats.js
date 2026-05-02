@@ -1,21 +1,21 @@
-const mongoose = require('mongoose');
+const { registerModel, DataTypes } = require('../config/db');
 
-const FacilityStatsSchema = new mongoose.Schema({
-  facility: { type: mongoose.Schema.Types.ObjectId, ref: 'Facility', required: true, unique: true },
-  viewsWeek: { type: Number, default: 0 },
-  viewsMonth: { type: Number, default: 0 },
-  viewsTotal: { type: Number, default: 0 },
-  ratingAvg: { type: Number, default: 0 },
-  ratingCount: { type: Number, default: 0 },
-  lastViewedAt: { type: Date },
+// Define FacilityStats model
+const FacilityStats = registerModel('FacilityStats', {
+  facility: { type: DataTypes.INTEGER, allowNull: false, unique: true },
+  viewsWeek: { type: DataTypes.INTEGER, defaultValue: 0 },
+  viewsMonth: { type: DataTypes.INTEGER, defaultValue: 0 },
+  viewsTotal: { type: DataTypes.INTEGER, defaultValue: 0 },
+  ratingAvg: { type: DataTypes.FLOAT, defaultValue: 0 },
+  ratingCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+  lastViewedAt: DataTypes.DATE,
   // arbitrary counters/metrics
-  meta: { type: mongoose.Schema.Types.Mixed, default: {} },
-  updatedAt: { type: Date, default: Date.now }
+  meta: { type: DataTypes.JSON, defaultValue: {} },
+  updatedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
 });
 
-FacilityStatsSchema.pre('save', function (next) {
-  this.updatedAt = Date.now();
-  next();
+FacilityStats.addHook('beforeSave', (stats) => {
+  stats.updatedAt = new Date();
 });
 
-module.exports = mongoose.model('FacilityStats', FacilityStatsSchema);
+module.exports = FacilityStats;

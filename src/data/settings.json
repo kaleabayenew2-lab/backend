@@ -5,5 +5,7 @@
   "maintenanceMode": false,
   "backupIntervalDays": 7,
   "multiLanguage": false,
-  "darkMode": true
+  "darkMode": true,
+  "smtpUser": "kaleabayenew2@gmail.com",
+  "smtpPass": "Kale@1513"
 }

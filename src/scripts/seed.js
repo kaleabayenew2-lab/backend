@@ -1,11 +1,11 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
 const Facility = require('../models/facility');
-const connectDB = require('../config/db');
+const db = require('../config/db');
 
 async function seed() {
   try {
-    await connectDB();
+    await db.connectAll();
 
     // Example seed data
     const data = [

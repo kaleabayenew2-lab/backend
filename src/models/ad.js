@@ -1,24 +1,28 @@
-const mongoose = require('mongoose');
+const { registerModel, DataTypes } = require('../config/db');
 
-const AdSchema = new mongoose.Schema({
-  title: { type: String, required: true },
-  subtitle: { type: String },
-  image: { type: String, default: '' },
+// Define Ad model
+const Ad = registerModel('Ad', {
+  title: { type: DataTypes.STRING, allowNull: false },
+  subtitle: DataTypes.STRING,
+  image: { type: DataTypes.STRING, defaultValue: '' },
   // type of highlight: popular_search, rating_summary, newly_added, most_viewed_week, most_viewed_month, top_rated, nearby, custom
-  kind: { type: String, required: true, index: true },
+  kind: { type: DataTypes.STRING, allowNull: false },
   // optional link to a facility
-  facility: { type: mongoose.Schema.Types.ObjectId, ref: 'Facility', default: null },
+  facility: { type: DataTypes.INTEGER, defaultValue: null },
   // arbitrary metadata useful to reconstruct or query the ad
-  meta: { type: mongoose.Schema.Types.Mixed, default: {} },
-  source: { type: String, default: 'generated' },
-  active: { type: Boolean, default: true },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
+  meta: { type: DataTypes.JSON, defaultValue: {} },
+  source: { type: DataTypes.STRING, defaultValue: 'generated' },
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+  createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
+  updatedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
+}, {
+  indexes: [
+    { fields: ['kind'] }
+  ]
 });
 
-AdSchema.pre('save', function (next) {
-  this.updatedAt = Date.now();
-  next();
+Ad.addHook('beforeSave', (ad) => {
+  ad.updatedAt = new Date();
 });
 
-module.exports = mongoose.model('Ad', AdSchema);
+module.exports = Ad;

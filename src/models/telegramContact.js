@@ -1,11 +1,16 @@
-const mongoose = require('mongoose');
+const { registerModel, DataTypes } = require('../config/db');
 
-const TelegramContactSchema = new mongoose.Schema({
-  chatId: { type: String, required: true, unique: true, index: true },
-  phone: String,
-  username: String,
-  linkedUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-  createdAt: { type: Date, default: Date.now }
+// Define TelegramContact model
+const TelegramContact = registerModel('TelegramContact', {
+  chatId: { type: DataTypes.STRING, allowNull: false, unique: true },
+  phone: DataTypes.STRING,
+  username: DataTypes.STRING,
+  linkedUser: { type: DataTypes.INTEGER, defaultValue: null },
+  createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
+}, {
+  indexes: [
+    { fields: ['chatId'] }
+  ]
 });
 
-module.exports = mongoose.model('TelegramContact', TelegramContactSchema);
+module.exports = TelegramContact;

@@ -34,11 +34,19 @@ exports.getAll = async (req, res) => {
     const stats = readStats();
 
     // gather counts and quick samples
-    const totalUsers = await User.countDocuments();
-    const usersSample = await User.find({}, 'fullName email phone roles isActive telegramChatId telegramUsername').sort({ createdAt: -1 }).limit(50);
+    const totalUsers = await User.count();
+    const usersSample = await User.findAll({
+      attributes: ['fullName', 'email', 'phone', 'telegramChatId', 'telegramUsername'],
+      order: [['createdAt', 'DESC']],
+      limit: 50
+    });
 
-    const totalFacilities = await Facility.countDocuments();
-    const facilitiesSample = await Facility.find({}, 'name type address phone isEmergency').sort({ updatedAt: -1 }).limit(50);
+    const totalFacilities = await Facility.count();
+    const facilitiesSample = await Facility.findAll({
+      attributes: ['name', 'type', 'address', 'phone', 'isEmergency'],
+      order: [['updatedAt', 'DESC']],
+      limit: 50
+    });
 
     // read feedbacks and notifications from data files (if present)
     let feedbacks = [];
@@ -101,6 +109,9 @@ exports.getSettings = (req, res) => {
   res.json(s);
 };
 
+// expose utility for other modules (e.g. maintenance middleware)
+exports.readSettings = readSettings;
+
 exports.updateSettings = (req, res) => {
   try {
     const updates = req.body || {};
@@ -108,8 +119,13 @@ exports.updateSettings = (req, res) => {
     const merged = Object.assign({}, current, updates);
     writeSettings(merged);
     try {
-      if (socketManager && socketManager.emitToAdmins) {
-        socketManager.emitToAdmins('settings_updated', merged);
+      if (socketManager) {
+        if (socketManager.emitToAdmins) {
+          socketManager.emitToAdmins('settings_updated', merged);
+        }
+        if (socketManager.emitToAll) {
+          socketManager.emitToAll('settings_updated', merged);
+        }
       }
     } catch (e) {}
     res.json(merged);
@@ -373,7 +389,11 @@ exports.generateAds = async (req, res) => {
 exports.getMostViewed = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit, 10) || 50;
-    const items = await Facility.find({}).sort({ viewsTotal: -1 }).limit(limit).select('name type address phone viewsTotal averageRating ratingCount');
+    const items = await Facility.findAll({
+      order: [['viewsTotal', 'DESC']],
+      limit: limit,
+      attributes: ['name', 'type', 'address', 'phone', 'viewsTotal', 'averageRating', 'ratingCount']
+    });
     return res.json({ items });
   } catch (err) {
     console.error('getMostViewed error', err);
@@ -385,10 +405,52 @@ exports.getMostViewed = async (req, res) => {
 exports.getTopRated = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit, 10) || 50;
-    const items = await Facility.find({ ratingCount: { $gt: 0 } }).sort({ averageRating: -1, ratingCount: -1 }).limit(limit).select('name type address phone viewsTotal averageRating ratingCount');
+    const items = await Facility.findAll({
+      where: { ratingCount: { [require('sequelize').Op.gt]: 0 } },
+      order: [['averageRating', 'DESC'], ['ratingCount', 'DESC']],
+      limit: limit,
+      attributes: ['name', 'type', 'address', 'phone', 'viewsTotal', 'averageRating', 'ratingCount']
+    });
     return res.json({ items });
   } catch (err) {
     console.error('getTopRated error', err);
     return res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// DELETE /api/admin/facilities - Remove all facilities
+exports.removeAllFacilities = async (req, res) => {
+  try {
+    console.log('🗑️  ADMIN: Removing all facilities...');
+    
+    // Get count before deletion
+    const count = await Facility.count();
+    console.log(`📊 ADMIN: Found ${count} facilities to delete`);
+    
+    if (count === 0) {
+      return res.json({ 
+        success: true, 
+        message: 'No facilities to remove',
+        deletedCount: 0 
+      });
+    }
+    
+    // Delete all facilities
+    const deletedCount = await Facility.destroy({ where: {} });
+    
+    console.log(`✅ ADMIN: Successfully deleted ${deletedCount} facilities`);
+    
+    return res.json({ 
+      success: true, 
+      message: `Successfully removed ${deletedCount} facilities`,
+      deletedCount: deletedCount 
+    });
+  } catch (err) {
+    console.error('❌ ADMIN: Error removing all facilities:', err);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Failed to remove facilities',
+      error: err.message 
+    });
   }
 };

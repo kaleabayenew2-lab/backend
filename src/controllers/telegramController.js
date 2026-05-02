@@ -15,6 +15,12 @@ exports.getByChatId = async (req, res) => {
 };
 
 // create or update a contact record
+// list all chat contacts (admin may use for broadcasting)
+exports.listContacts = async (req, res) => {
+  const docs = await TelegramContact.find({}).select('chatId');
+  res.json({ chatIds: docs.map(d => d.chatId) });
+};
+
 exports.upsertContact = async (req, res) => {
   try {
     const { phone, chatId, telegramUsername } = req.body || {};

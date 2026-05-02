@@ -1,43 +1,55 @@
-const mongoose = require('mongoose');
+const { Sequelize, DataTypes } = require('sequelize');
 
-// prefer Atlas env var, then legacy name, then local dev fallback
-const uri = process.env.MONGODB_URI || process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/mobile_users';
+// Use SQLite database
+const sequelize = new Sequelize({
+  dialect: 'sqlite',
+  storage: './database.sqlite', // SQLite file in backend root
+  logging: false, // Disable SQL query logging
+});
 
-module.exports = function connectDB() {
-  const maxAttempts = 6;
-  let attempt = 0;
+// Test the connection
+async function testConnection() {
+  try {
+    await sequelize.authenticate();
+    console.log('✅ Database connected');
+  } catch (error) {
+    console.error('Unable to connect to the database:', error);
+  }
+}
 
-  const tryConnect = () => {
-    attempt += 1;
-    mongoose.connect(uri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    })
-      .then(() => console.log(`MongoDB connected: ${uri}`))
-      .catch(err => {
-        console.error(`Mongo connect error (attempt ${attempt}/${maxAttempts}):`, err && err.message ? err.message : err);
-        // Helpful diagnostics for name resolution issues
-        if (err && err.message && err.message.includes('ENOTFOUND')) {
-          console.warn('DNS lookup failed for MongoDB host. Common causes:');
-          console.warn('- No internet / blocked outbound DNS');
-          console.warn('- Corporate proxy or firewall blocking DNS/resolution');
-          console.warn('- Local DNS misconfiguration; try `nslookup <host>` or `nslookup', '8.8.8.8`');
-          console.warn('- MongoDB Atlas cluster DNS entries may be blocked; verify network connectivity and try another DNS server (e.g., 8.8.8.8)');
-        }
+// Schema registry for models
+const modelRegistry = {};
 
-        if (attempt < maxAttempts) {
-          const wait = 1000 * Math.pow(2, attempt - 1);
-          console.log(`Retrying MongoDB connection in ${wait} ms...`);
-          setTimeout(tryConnect, wait);
-          return;
-        }
+// Function to register a model
+function registerModel(name, modelDefinition) {
+  const model = sequelize.define(name, modelDefinition);
+  modelRegistry[name] = model;
+  return model;
+}
 
-      console.error('Failed to connect to MongoDB after multiple attempts.');
-      // Do not exit process in development; allow file-backed fallbacks to work.
-      // Log and continue running the server without an active MongoDB connection.
-      return;
-      });
-  };
+// Function to get a model
+function getModel(name) {
+  return modelRegistry[name];
+}
 
-  tryConnect();
+// Sync database (create tables)
+async function syncDatabase() {
+  try {
+    await sequelize.sync({ force: false }); // Set force: true to drop and recreate tables
+    console.log('✅ Database synced');
+  } catch (error) {
+    console.error('Error syncing database:', error);
+  }
+}
+
+// Export functions and sequelize instance
+module.exports = {
+  sequelize,
+  DataTypes,
+  registerModel,
+  getModel,
+  testConnection,
+  syncDatabase,
 };
+
+

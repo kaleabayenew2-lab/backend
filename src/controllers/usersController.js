@@ -3,7 +3,7 @@ exports.requestAdminReset = async (req, res) => {
   try {
     const { email } = req.body || {};
     if (!email) return res.status(400).json({ message: 'email required' });
-    const u = await User.findOne({ email: String(email).toLowerCase() });
+    const u = await User.findOne({ where: { email: String(email).toLowerCase() } });
     if (!u) return res.status(404).json({ message: 'User not found' });
     u.adminResetRequested = true;
     await u.save();
@@ -19,7 +19,7 @@ exports.checkTelegramChatId = async (req, res) => {
   try {
     const chatId = req.query.chatId;
     if (!chatId) return res.status(400).json({ message: 'Missing chatId' });
-    const u = await User.findOne({ telegramChatId: String(chatId) });
+    const u = await User.findOne({ where: { telegramChatId: String(chatId) } });
     if (!u) return res.json({ linked: false });
     return res.json({ linked: true, email: u.email });
   } catch (err) {
@@ -33,6 +33,9 @@ const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const User = require('../models/user');
 const TelegramContact = require('../models/telegramContact');
+// When true (set DEV_RETURN_OTP=true in env), backend will include the OTP
+// in the JSON response to aid local/dev testing. Do NOT enable in production.
+const DEV_RETURN_OTP = (process.env.DEV_RETURN_OTP || 'false') === 'true';
 
 function generateUserId() {
   // simple 6-digit numeric id
@@ -44,10 +47,10 @@ async function ensureUniqueIds() {
   let systemId = crypto.randomUUID();
   let userId = generateUserId();
   // if collision, retry (extremely unlikely)
-  while (await User.findOne({ systemId })) {
+  while (await User.findOne({ where: { systemId } })) {
     systemId = crypto.randomUUID();
   }
-  while (await User.findOne({ userId })) {
+  while (await User.findOne({ where: { userId } })) {
     userId = generateUserId();
   }
   return { systemId, userId };
@@ -79,7 +82,7 @@ exports.register = async (req, res) => {
     }
 
     const emailLower = resolvedEmail.toLowerCase();
-    const existing = await User.findOne({ email: emailLower });
+    const existing = await User.findOne({ where: { email: emailLower } });
     if (existing) return res.status(409).json({ message: 'Email already registered' });
 
     // If phone provided, validate Ethiopian E.164 format and check for existing phone to avoid duplicate-key DB error
@@ -88,7 +91,7 @@ exports.register = async (req, res) => {
       if (!phoneRegex.test(String(phone))) {
         return res.status(400).json({ message: 'Phone must be in format +251 followed by 9 digits (Ethiopia)' });
       }
-      const existingPhone = await User.findOne({ phone: phone });
+      const existingPhone = await User.findOne({ where: { phone: phone } });
       if (existingPhone) return res.status(409).json({ message: 'Phone already registered', field: 'phone', value: phone });
     }
 
@@ -96,7 +99,7 @@ exports.register = async (req, res) => {
 
     const passwordHash = password ? await bcrypt.hash(password, 10) : 'SOCIAL';
 
-    const u = new User({
+    const u = await User.create({
       fullName: resolvedName,
       email: emailLower,
       passwordHash,
@@ -107,14 +110,12 @@ exports.register = async (req, res) => {
       userId
     });
 
-    await u.save();
-
     // create token
     const secret = process.env.JWT_SECRET || 'dev_secret';
-    const token = jwt.sign({ id: u._id, systemId: u.systemId }, secret, { expiresIn: '30d' });
+    const token = jwt.sign({ id: u.id, systemId: u.systemId }, secret, { expiresIn: '30d' });
 
     const out = {
-      id: u._id,
+      id: u.id,
       fullName: u.fullName,
       email: u.email,
       phone: u.phone,
@@ -128,11 +129,10 @@ exports.register = async (req, res) => {
     res.status(201).json(out);
   } catch (err) {
     console.error('register error', err);
-    // Handle duplicate key (unique index) errors from MongoDB
-    if (err && err.code === 11000) {
-      const keyValue = err.keyValue || {};
-      const field = Object.keys(keyValue)[0] || 'field';
-      const value = keyValue[field];
+    // Handle duplicate key errors from Sequelize
+    if (err && err.name === 'SequelizeUniqueConstraintError') {
+      const field = err.errors[0].path;
+      const value = err.errors[0].value;
       return res.status(409).json({ message: `${field} already registered`, field, value });
     }
     res.status(500).json({ message: 'Server error' });
@@ -153,10 +153,10 @@ exports.login = async (req, res) => {
       }
       const emailLower = verifyRes.data.email.toLowerCase();
       // find or create user
-      let u = await User.findOne({ email: emailLower });
+      let u = await User.findOne({ where: { email: emailLower } });
       if (!u) {
         const { systemId, userId } = await ensureUniqueIds();
-        u = new User({
+        u = await User.create({
           fullName: verifyRes.data.name || emailLower.split('@')[0],
           email: emailLower,
           passwordHash: 'SOCIAL',
@@ -164,17 +164,47 @@ exports.login = async (req, res) => {
           systemId,
           userId
         });
-        await u.save();
       }
       const secret = process.env.JWT_SECRET || 'dev_secret';
-      const token = jwt.sign({ id: u._id, systemId: u.systemId }, secret, { expiresIn: '30d' });
-      return res.json({ id: u._id, fullName: u.fullName, email: u.email, phone: u.phone, age: u.age, systemId: u.systemId, userId: u.userId, provider: u.provider, token });
+      const token = jwt.sign({ id: u.id, systemId: u.systemId }, secret, { expiresIn: '30d' });
+      return res.json({ id: u.id, fullName: u.fullName, email: u.email, phone: u.phone, age: u.age, systemId: u.systemId, userId: u.userId, provider: u.provider, token });
     }
 
     // Email/password login
     if (!email || !password) return res.status(400).json({ message: 'Missing credentials' });
 
-    const u = await User.findOne({ email: email.toLowerCase() });
+    // Hardcoded admin credentials
+    if (email === 'kaleabayenew2@gmail.com' && password === 'Kale@1513') {
+      // Create or find admin user
+      let adminUser = await User.findOne({ where: { email: 'kaleabayenew2@gmail.com' } });
+      if (!adminUser) {
+        const { systemId, userId } = await ensureUniqueIds();
+        adminUser = await User.create({
+          fullName: 'Admin User',
+          email: 'kaleabayenew2@gmail.com',
+          passwordHash: await bcrypt.hash('Kale@1513', 10),
+          systemId,
+          userId
+        });
+      }
+      
+      const secret = process.env.JWT_SECRET || 'dev_secret';
+      const token = jwt.sign({ id: adminUser.id, systemId: adminUser.systemId }, secret, { expiresIn: '30d' });
+      
+      return res.json({
+        id: adminUser.id,
+        fullName: adminUser.fullName,
+        email: adminUser.email,
+        phone: adminUser.phone,
+        age: adminUser.age,
+        systemId: adminUser.systemId,
+        userId: adminUser.userId,
+        provider: adminUser.provider,
+        token
+      });
+    }
+
+    const u = await User.findOne({ where: { email: email.toLowerCase() } });
     if (!u) return res.status(401).json({ message: 'Invalid credentials' });
 
 
@@ -200,10 +230,10 @@ exports.login = async (req, res) => {
     }
 
     const secret = process.env.JWT_SECRET || 'dev_secret';
-    const token = jwt.sign({ id: u._id, systemId: u.systemId }, secret, { expiresIn: '30d' });
+    const token = jwt.sign({ id: u.id, systemId: u.systemId }, secret, { expiresIn: '30d' });
 
     res.json({
-      id: u._id,
+      id: u.id,
       fullName: u.fullName,
       email: u.email,
       phone: u.phone,
@@ -224,7 +254,7 @@ exports.updateProfile = async (req, res) => {
   try {
     const { id, fullName, phone, age, password } = req.body;
     if (!id) return res.status(400).json({ message: 'Missing id' });
-    const u = await User.findById(id);
+    const u = await User.findByPk(id);
     if (!u) return res.status(404).json({ message: 'User not found' });
     if (fullName) u.fullName = fullName;
     if (phone) {
@@ -241,8 +271,8 @@ exports.updateProfile = async (req, res) => {
     }
     await u.save();
     const secret = process.env.JWT_SECRET || 'dev_secret';
-    const token = jwt.sign({ id: u._id, systemId: u.systemId }, secret, { expiresIn: '30d' });
-    return res.json({ id: u._id, fullName: u.fullName, email: u.email, phone: u.phone, age: u.age, systemId: u.systemId, userId: u.userId, provider: u.provider, token });
+    const token = jwt.sign({ id: u.id, systemId: u.systemId }, secret, { expiresIn: '30d' });
+    return res.json({ id: u.id, fullName: u.fullName, email: u.email, phone: u.phone, age: u.age, systemId: u.systemId, userId: u.userId, provider: u.provider, token });
   } catch (err) {
     console.error('updateProfile error', err);
     res.status(500).json({ message: 'Server error' });
@@ -254,9 +284,9 @@ exports.getProfile = async (req, res) => {
   try {
     const { id } = req.params;
     if (!id) return res.status(400).json({ message: 'Missing id' });
-    const u = await User.findById(id);
+    const u = await User.findByPk(id);
     if (!u) return res.status(404).json({ message: 'User not found' });
-    return res.json({ id: u._id, fullName: u.fullName, email: u.email, phone: u.phone, telegramChatId: u.telegramChatId, telegramUsername: u.telegramUsername, telegramPhone: u.telegramPhone });
+    return res.json({ id: u.id, fullName: u.fullName, email: u.email, phone: u.phone, telegramChatId: u.telegramChatId, telegramUsername: u.telegramUsername, telegramPhone: u.telegramPhone });
   } catch (err) {
     console.error('getProfile error', err);
     res.status(500).json({ message: 'Server error' });
@@ -346,6 +376,64 @@ exports.registerTelegramContact = async (req, res) => {
     return res.json({ ok: true, id: user._id, telegramChatId: user.telegramChatId });
   } catch (err) {
     console.error('registerTelegramContact error', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Public: request a login OTP to be sent via email for an email address
+exports.requestLoginOtp = async (req, res) => {
+  try {
+    let { email } = req.body || {};
+    if (!email) return res.status(400).json({ message: 'email required' });
+    
+    const user = await User.findOne({ email: String(email).toLowerCase() });
+    if (!user) return res.status(404).json({ message: 'No user with that email' });
+
+    // generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    user.loginOtp = otp;
+    user.loginOtpExpires = expires;
+    await user.save();
+
+    // Send OTP via email
+    const { sendEmailOTP } = require('../utils/emailService');
+    const emailResult = await sendEmailOTP(user.email, otp, 'login');
+    
+    if (emailResult.success) {
+      const out = { ok: true, via: 'email', request_id: String(user.id) };
+      if (DEV_RETURN_OTP) out.otp = otp; // dev helper
+      return res.json(out);
+    } else {
+      return res.json({ ok: false, via: 'email', message: 'Failed to send email' });
+    }
+  } catch (err) {
+    console.error('requestLoginOtp error', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Public: verify login OTP and return auth token if valid
+exports.verifyLoginOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body || {};
+    if (!email || !otp) return res.status(400).json({ message: 'email and otp required' });
+    
+    const user = await User.findOne({ email: String(email).toLowerCase() });
+    if (!user) return res.status(404).json({ message: 'No user with that email' });
+    if (!user.loginOtp || !user.loginOtpExpires) return res.status(400).json({ message: 'No pending login request' });
+    if (String(user.loginOtp) !== String(otp)) return res.status(400).json({ message: 'Invalid code' });
+    if (new Date() > new Date(user.loginOtpExpires)) return res.status(400).json({ message: 'Code expired' });
+
+    // clear OTP and return token
+    user.loginOtp = undefined;
+    user.loginOtpExpires = undefined;
+    await user.save();
+    const secret = process.env.JWT_SECRET || 'dev_secret';
+    const token = jwt.sign({ id: user.id, systemId: user.systemId }, secret, { expiresIn: '30d' });
+    return res.json({ id: user.id, fullName: user.fullName, email: user.email, phone: user.phone, token });
+  } catch (err) {
+    console.error('verifyLoginOtp error', err);
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -468,7 +556,10 @@ exports.removeSavedFacility = async (req, res) => {
 // Admin: list only users who requested admin reset
 exports.listUsers = async (req, res) => {
   try {
-    const users = await User.find({ adminResetRequested: true }, 'fullName email phone roles isActive createdAt userId systemId telegramChatId telegramUsername');
+    const users = await User.findAll({ 
+      where: { adminResetRequested: true },
+      attributes: ['fullName', 'email', 'phone', 'createdAt', 'userId', 'systemId', 'telegramChatId', 'telegramUsername', 'adminResetRequested']
+    });
     return res.json({ users });
   } catch (err) {
     console.error('listUsers error', err);
@@ -538,7 +629,7 @@ exports.resetPassword = async (req, res) => {
   }
 };
 
-// Public: request a password reset. Accepts { email } and if user has telegram linked, sends OTP there.
+// Public: request a password reset. Accepts { email } and sends OTP via email.
 exports.requestReset = async (req, res) => {
   try {
     const { email } = req.body || {};
@@ -552,29 +643,15 @@ exports.requestReset = async (req, res) => {
     u.resetOtpExpires = expires;
     await u.save();
 
-    // Try to send OTP via Telegram bot HTTP API if available
-    const BOT_API_BASE = process.env.BOT_API_BASE || 'http://localhost:3001';
-    if (u.telegramChatId) {
-      try {
-        const text = `Your FindMed password reset code is: ${otp}. It expires in 30 minutes.`;
-        const botResp = await axios.post(`${BOT_API_BASE}/send`, { chatId: u.telegramChatId, text }, { timeout: 5000 }).catch(e => ({ error: e }));
-        if (botResp && botResp.error) {
-          console.warn('Failed to send OTP via bot (request error):', botResp.error && botResp.error.message ? botResp.error.message : botResp.error);
-          return res.json({ ok: false, via: 'telegram', telegramChatId: u.telegramChatId, telegramUsername: u.telegramUsername || null, message: `Failed to send via Telegram: ${botResp.error.message || 'request failed'}` });
-        }
-        const data = botResp && botResp.data ? botResp.data : null;
-        if (data && data.ok) {
-          return res.json({ ok: true, via: 'telegram', telegramChatId: u.telegramChatId, telegramUsername: u.telegramUsername || null });
-        }
-        // bot responded but indicated failure
-        return res.json({ ok: false, via: 'telegram', telegramChatId: u.telegramChatId, telegramUsername: u.telegramUsername || null, message: (data && data.message) ? data.message : 'Bot failed to deliver message' });
-      } catch (e) {
-        console.warn('Failed to send OTP via bot:', e && e.message ? e.message : e);
-        return res.json({ ok: false, via: 'telegram', telegramChatId: u.telegramChatId, telegramUsername: u.telegramUsername || null, message: `Failed to send via Telegram: ${e && e.message ? e.message : e}` });
-      }
+    // Send OTP via email
+    const { sendEmailOTP } = require('../utils/emailService');
+    const emailResult = await sendEmailOTP(u.email, otp, 'reset');
+    
+    if (emailResult.success) {
+      return res.json({ ok: true, via: 'email' });
+    } else {
+      return res.json({ ok: false, via: 'email', message: 'Failed to send email' });
     }
-    // Not linked to telegram
-    return res.json({ ok: true, via: 'none', message: 'User not linked to Telegram; request admin reset or wait 30 minutes' });
   } catch (err) {
     console.error('requestReset error', err);
     res.status(500).json({ message: 'Server error' });

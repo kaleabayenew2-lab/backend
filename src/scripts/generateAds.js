@@ -1,15 +1,16 @@
 const Facility = require('../models/facility');
 const FacilityStats = require('../models/facilityStats');
 const Ad = require('../models/ad');
+const { Op } = require('sequelize');
 
 async function generateAndPersistAds({ maxAds = 20, location } = {}) {
   // location: { lat, lng }
   const out = [];
 
   // Load facilities and stats
-  const facilities = await Facility.find({ isActive: true }).lean();
+  const facilities = await Facility.findAll({ where: { isActive: true } });
   const statsMap = {};
-  const stats = await FacilityStats.find({ facility: { $in: facilities.map(f => f._id) } }).lean();
+  const stats = await FacilityStats.findAll({ where: { facility: { [Op.in]: facilities.map(f => f.id) } } });
   stats.forEach(s => { statsMap[String(s.facility)] = s; });
 
   // Popular services
@@ -29,7 +30,7 @@ async function generateAndPersistAds({ maxAds = 20, location } = {}) {
 
   // Community rating
   let total = 0, count = 0;
-  facilities.forEach(f => { if (typeof f.rating === 'number') { total += f.rating; count++; } });
+  facilities.forEach(f => { if (typeof f.averageRating === 'number') { total += f.averageRating; count++; } });
   const avg = count>0 ? (total/count) : 0;
   out.push({ title: 'Community rating', subtitle: count>0 ? `Average ${avg.toFixed(1)} ★ from ${count} reviews` : 'No ratings yet', kind: 'rating_summary' });
 
@@ -59,19 +60,19 @@ async function generateAndPersistAds({ maxAds = 20, location } = {}) {
     }
   }
   if (newly) {
-    out.push({ title: 'Newly added near you', subtitle: `${newly.name || 'Facility'}` , kind: 'newly_added', facility: newly._id });
+    out.push({ title: 'Newly added near you', subtitle: `${newly.name || 'Facility'}` , kind: 'newly_added', facility: newly.id });
   }
 
   // Most viewed week/month using stats
-  const withStats = facilities.map(f => ({ f, s: statsMap[String(f._id)] || {} }));
+  const withStats = facilities.map(f => ({ f, s: statsMap[String(f.id)] || {} }));
   withStats.sort((a,b) => (b.s.viewsWeek||0) - (a.s.viewsWeek||0));
-  if (withStats.length) out.push({ title: 'Most viewed (week)', subtitle: withStats[0].f.name || '-', kind: 'most_viewed_week', facility: withStats[0].f._id });
+  if (withStats.length) out.push({ title: 'Most viewed (week)', subtitle: withStats[0].f.name || '-', kind: 'most_viewed_week', facility: withStats[0].f.id });
   withStats.sort((a,b) => (b.s.viewsMonth||0) - (a.s.viewsMonth||0));
-  if (withStats.length) out.push({ title: 'Most viewed (month)', subtitle: withStats[0].f.name || '-', kind: 'most_viewed_month', facility: withStats[0].f._id });
+  if (withStats.length) out.push({ title: 'Most viewed (month)', subtitle: withStats[0].f.name || '-', kind: 'most_viewed_month', facility: withStats[0].f.id });
 
   // Top rated
-  facilities.sort((a,b) => (b.rating||0) - (a.rating||0));
-  if (facilities.length) out.push({ title: 'Top rated', subtitle: facilities[0].name || '-', kind: 'top_rated', facility: facilities[0]._id });
+  facilities.sort((a,b) => (b.averageRating||0) - (a.averageRating||0));
+  if (facilities.length) out.push({ title: 'Top rated', subtitle: facilities[0].name || '-', kind: 'top_rated', facility: facilities[0].id });
 
   // Nearby: nearest by provided location
   if (location) {
@@ -90,14 +91,17 @@ async function generateAndPersistAds({ maxAds = 20, location } = {}) {
         if (dist < nd) { nd = dist; nearest = f; }
       }
     }
-    if (nearest) out.push({ title: 'Nearby', subtitle: nearest.name || '-', kind: 'nearby', facility: nearest._id, meta: { distanceKm: nd } });
+    if (nearest) out.push({ title: 'Nearby', subtitle: nearest.name || '-', kind: 'nearby', facility: nearest.id, meta: { distanceKm: nd } });
   }
 
   // Persist: upsert ads by kind (simple approach)
   for (const a of out) {
     const q = { kind: a.kind };
     const update = Object.assign({}, a, { active: true, updatedAt: new Date() });
-    await Ad.findOneAndUpdate(q, update, { upsert: true, new: true, setDefaultsOnInsert: true });
+    const [ad] = await Ad.findOrCreate({ where: q, defaults: update });
+    if (!ad.isNewRecord) {
+      await ad.update(update);
+    }
   }
 
   return out.slice(0, maxAds);

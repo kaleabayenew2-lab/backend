@@ -1,17 +1,18 @@
-const mongoose = require('mongoose');
+const { registerModel, DataTypes } = require('../config/db');
 
-const FeedbackSchema = new mongoose.Schema({
-  id: { type: String, required: true, unique: true },
-  name: { type: String, default: '' },
-  email: { type: String, default: '' },
-  message: { type: String, default: '' },
-  createdAt: { type: Date, default: Date.now },
-  sourceIp: { type: String, default: '' },
-  replied: { type: Boolean, default: false },
-  reply: { type: String, default: null },
-  replyMethod: { type: String, default: null },
-  repliedAt: { type: Date, default: null },
-  meta: { type: mongoose.Schema.Types.Mixed, default: {} },
+// Define Feedback model
+const Feedback = registerModel('Feedback', {
+  id: { type: DataTypes.STRING, allowNull: false, unique: true },
+  name: { type: DataTypes.STRING, defaultValue: '' },
+  email: { type: DataTypes.STRING, defaultValue: '' },
+  message: { type: DataTypes.STRING, defaultValue: '' },
+  createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
+  sourceIp: { type: DataTypes.STRING, defaultValue: '' },
+  replied: { type: DataTypes.BOOLEAN, defaultValue: false },
+  reply: { type: DataTypes.STRING, defaultValue: null },
+  replyMethod: { type: DataTypes.STRING, defaultValue: null },
+  repliedAt: DataTypes.DATE,
+  meta: { type: DataTypes.JSON, defaultValue: {} }
 });
 
-module.exports = mongoose.model('Feedback', FeedbackSchema);
+module.exports = Feedback;

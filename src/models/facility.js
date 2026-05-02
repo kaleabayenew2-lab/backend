@@ -1,45 +1,72 @@
-const mongoose = require('mongoose');
+const { registerModel, DataTypes } = require('../config/db');
 
-const FacilitySchema = new mongoose.Schema({
-  name: { type: String, required: true, unique: true, index: true },
-  type: { type: String, enum: ['hospital','pharmacy'], required: true },
-  location: {
-    type: { type: String, enum: ['Point'], default: 'Point' },
-    coordinates: { type: [Number], index: '2dsphere' } // [lng, lat]
-  },
-  address: String,
-  email: String,
-  altPhone: { type: [String], default: [] },
-  phone: String,
+// Define Facility model
+const Facility = registerModel('Facility', {
+  name: { type: DataTypes.STRING, allowNull: false, unique: true },
+  type: { type: DataTypes.ENUM('hospital', 'pharmacy'), allowNull: false },
+  location: { type: DataTypes.JSON, defaultValue: { type: 'Point', coordinates: [] } },
+  address: DataTypes.STRING,
+  email: DataTypes.STRING,
+  altPhone: { type: DataTypes.JSON, defaultValue: [] },
+  phone: DataTypes.STRING,
   // Optional agent account credentials for facility management
-  username: { type: String, unique: true, sparse: true },
-  passwordHash: String,
-  services: [String],
+  username: { type: DataTypes.STRING, unique: true },
+  passwordHash: DataTypes.STRING,
+  services: { type: DataTypes.JSON, defaultValue: [] },
   // Agent identifier created by bot during registration (short uuid)
-  agentId: { type: String, unique: true, sparse: true, index: true },
-  openingHours: String,
+  agentId: { type: DataTypes.STRING, unique: true },
+  openingHours: DataTypes.STRING,
   // Optional classificiation by type
-  hospitalType: String,
-  pharmacyType: String,
+  hospitalType: DataTypes.STRING,
+  pharmacyType: DataTypes.STRING,
   // Ownership: 'private' or 'public'
-  ownership: { type: String, enum: ['private', 'public'], default: 'private' },
-  notes: String,
-  isEmergency: { type: Boolean, default: false },
-  isActive: { type: Boolean, default: true },
+  ownership: { type: DataTypes.ENUM('private', 'public'), defaultValue: 'private' },
+  notes: DataTypes.STRING,
+  isEmergency: { type: DataTypes.BOOLEAN, defaultValue: false },
+  isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
   // Usage statistics
-  viewsTotal: { type: Number, default: 0, index: true },
-  lastViewedAt: { type: Date },
+  viewsTotal: { type: DataTypes.INTEGER, defaultValue: 0 },
+  lastViewedAt: DataTypes.DATE,
   // Simple rating aggregation
-  ratingCount: { type: Number, default: 0 },
-  ratingSum: { type: Number, default: 0 },
-  averageRating: { type: Number, default: 0, index: true },
-  updatedAt: { type: Date, default: Date.now }
+  ratingCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+  ratingSum: { type: DataTypes.INTEGER, defaultValue: 0 },
+  averageRating: { type: DataTypes.FLOAT, defaultValue: 0 },
+  updatedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
+}, {
+  indexes: [
+    { unique: true, fields: ['name'] },
+    { fields: ['viewsTotal'] },
+    { fields: ['averageRating'] },
+    { fields: ['agentId'] }
+  ]
 });
 
-// Ensure a unique index on name (case-sensitive index at DB level). For case-insensitive checks
-// we also perform a lookup in controller using case-insensitive regex.
-FacilitySchema.index({ name: 1 }, { unique: true });
-// Ensure GeoJSON `location` field has a 2dsphere index so $nearSphere queries work
-FacilitySchema.index({ location: '2dsphere' });
+// encrypt some fields before save and decrypt helper
+const { encrypt: _encrypt, decrypt: _decrypt } = require('../utils/encryption');
 
-module.exports = mongoose.model('Facility', FacilitySchema);
+Facility.addHook('beforeSave', (facility) => {
+  if (facility.changed('phone') && facility.phone) {
+    facility.phone = _encrypt(facility.phone);
+  }
+  if (facility.changed('email') && facility.email) {
+    facility.email = _encrypt(facility.email);
+  }
+});
+
+Facility.prototype.decryptFields = function () {
+  try {
+    if (this.phone) this.phone = _decrypt(this.phone);
+    if (this.email) this.email = _decrypt(this.email);
+  } catch (_) {}
+  return this;
+};
+
+Facility.addHook('afterFind', (facilities) => {
+  if (Array.isArray(facilities)) {
+    facilities.forEach(facility => facility.decryptFields());
+  } else if (facilities) {
+    facilities.decryptFields();
+  }
+});
+
+module.exports = Facility;

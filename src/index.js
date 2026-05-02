@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
-const connectDB = require('./config/db');
+const cors = require('cors');const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');const db = require('./config/db');
 const fs = require('fs');
 const path = require('path');
 
@@ -9,7 +9,34 @@ const app = express();
 // Configure CORS to allow the frontend origin and credentials when required
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
 app.use(cors({ origin: FRONTEND_ORIGIN, credentials: true }));
+app.use(helmet());
+
+// basic rate limiter
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per window
+});
+app.use(apiLimiter);
+
 app.use(express.json());
+
+// maintenance mode middleware: if enabled, reject all non-admin requests
+const adminController = require('./controllers/adminController');
+app.use((req, res, next) => {
+  try {
+    const s = adminController.readSettings();
+    if (s && s.maintenanceMode === true) {
+      // allow admin endpoints to toggle off maintenance and health check
+      if (req.path.startsWith('/api/admin') || req.path === '/health') {
+        return next();
+      }
+      return res.status(503).json({ message: 'Server under maintenance' });
+    }
+  } catch (e) {
+    // ignore errors and proceed normally
+  }
+  next();
+});
 
 // simple health endpoint used by frontend connection checks
 app.get('/health', (req, res) => {
@@ -29,7 +56,11 @@ app.get('/api/csrf-token', (req, res) => {
   }
 });
 
-connectDB();
+// Import models to ensure they're registered
+require('./models/facility');
+
+// Initialize SQLite database
+db.testConnection().then(() => db.syncDatabase());
 
 // ensure uploads and logs directories exist
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -75,6 +106,10 @@ app.use('/api/chat', chatRouter);
 const uploadsRouter = require('./routes/uploads');
 app.use('/api/uploads', uploadsRouter);
 
+// OTP
+const otpRouter = require('./routes/otp');
+app.use('/api/otp', otpRouter);
+
 const os = require('os');
 
 const PORT = process.env.PORT || 5000;
@@ -82,14 +117,33 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 // support WebSocket (socket.io)
 const http = require('http');
+const https = require('https');
 let server;
 let socketManager = null;
 let notificationsController = null;
+
+// if HTTPS key/cert are provided via environment, use them
+const httpsKey = process.env.HTTPS_KEY_PATH;
+const httpsCert = process.env.HTTPS_CERT_PATH;
+if (httpsKey && httpsCert) {
+  try {
+    const fs = require('fs');
+    const key = fs.readFileSync(httpsKey);
+    const cert = fs.readFileSync(httpsCert);
+    server = https.createServer({ key, cert }, app);
+    console.log('HTTPS server configured');
+  } catch (err) {
+    console.warn('Failed to create HTTPS server, falling back to HTTP:', err);
+    server = http.createServer(app);
+  }
+} else {
+  server = http.createServer(app);
+}
+
 try {
   const { Server } = require('socket.io');
   socketManager = require('./utils/socketManager');
   notificationsController = require('./controllers/notificationsController');
-  server = http.createServer(app);
   const io = new Server(server, { cors: { origin: '*' } });
   socketManager.init(io);
   // log socket connections for debugging
@@ -106,30 +160,31 @@ try {
 function logNetworkInterfaces() {
   try {
     const nets = os.networkInterfaces();
-    console.log('Active network interfaces:');
+    let primaryAddress = null;
+    
     Object.keys(nets).forEach((name) => {
       const iface = nets[name] || [];
       iface.forEach((info) => {
-        // skip internal (loopback) interfaces
         if (info.internal) return;
-        console.log(` - ${name} (${info.family}) ${info.address} ${info.netmask || ''} ${info.mac || ''}`);
-        if (HOST === '0.0.0.0') {
-          console.log(`   Accessible: http://${info.address}:${PORT}`);
+        if (info.family === 'IPv4' && !primaryAddress) {
+          primaryAddress = info.address;
         }
       });
     });
-    if (HOST === '0.0.0.0') {
-      console.log(`Also accessible on localhost: http://127.0.0.1:${PORT}`);
+    
+    if (primaryAddress) {
+      console.log(`🌐 Server: http://${primaryAddress}:${PORT}`);
+      console.log(`🏠 Local: http://localhost:${PORT}`);
     } else {
-      console.log(`Listening on http://${HOST}:${PORT}`);
+      console.log(`🚀 Server running on port ${PORT}`);
     }
   } catch (err) {
-    console.warn('Could not enumerate network interfaces:', err);
+    console.log(`🚀 Server running on port ${PORT}`);
   }
 }
 
 server.listen(PORT, HOST, () => {
-  console.log(`Server running on ${HOST}:${PORT}`);
+  console.log(`🚀 Backend server started`);
   logNetworkInterfaces();
   // Optionally run ad generator on startup and at interval
   try {
@@ -140,11 +195,11 @@ server.listen(PORT, HOST, () => {
       (async () => {
         try {
           await generator.generateAndPersistAds();
-          appendLog('generateAds', 'startup', 'ok');
+          console.log('✅ Ads generated');
         } catch (e) {
           appendLog('generateAds', 'startup', `error: ${e.message || e}`);
           sendAlert({ source: 'generateAds', when: 'startup', error: e });
-          console.error('generateAds startup error', e);
+          console.error('❌ Ads generation failed:', e.message);
         }
       })();
       // schedule periodic generation (every AD_GENERATOR_INTERVAL_MIN minutes)
@@ -152,11 +207,11 @@ server.listen(PORT, HOST, () => {
       setInterval(async () => {
         try {
           await generator.generateAndPersistAds();
-          appendLog('generateAds', 'interval', 'ok');
+          console.log('✅ Ads refreshed');
         } catch (e) {
           appendLog('generateAds', 'interval', `error: ${e.message || e}`);
           sendAlert({ source: 'generateAds', when: 'interval', error: e });
-          console.error('generateAds interval error', e);
+          console.error('❌ Ads refresh failed:', e.message);
         }
       }, Math.max(1, intervalMin) * 60 * 1000);
     }
