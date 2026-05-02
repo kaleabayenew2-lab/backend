@@ -1,55 +1,63 @@
-const { Sequelize, DataTypes } = require('sequelize');
+const knex = require('knex');
 
-// Use SQLite database
-const sequelize = new Sequelize({
-  dialect: 'sqlite',
-  storage: './database.sqlite', // SQLite file in backend root
-  logging: false, // Disable SQL query logging
+// Initialize database (SQLite)
+const db = knex({
+  client: 'better-sqlite3',
+  connection: {
+    filename: './database.sqlite'
+  },
+  useNullAsDefault: true
 });
 
-// Test the connection
+// Test connection
 async function testConnection() {
   try {
-    await sequelize.authenticate();
+    await db.raw('SELECT 1');
     console.log('✅ Database connected');
   } catch (error) {
-    console.error('Unable to connect to the database:', error);
+    console.error('❌ Database connection failed:', error);
   }
 }
 
-// Schema registry for models
+// Simple model registry (optional)
 const modelRegistry = {};
 
-// Function to register a model
-function registerModel(name, modelDefinition) {
-  const model = sequelize.define(name, modelDefinition);
-  modelRegistry[name] = model;
-  return model;
+// Register a "model" (just table name wrapper)
+function registerModel(name, tableName) {
+  modelRegistry[name] = tableName;
+  return tableName;
 }
 
-// Function to get a model
+// Get model (table name)
 function getModel(name) {
   return modelRegistry[name];
 }
 
-// Sync database (create tables)
+// Sync database (create tables manually)
 async function syncDatabase() {
   try {
-    await sequelize.sync({ force: false }); // Set force: true to drop and recreate tables
+    const exists = await db.schema.hasTable('users');
+
+    if (!exists) {
+      await db.schema.createTable('users', (table) => {
+        table.increments('id').primary();
+        table.string('name');
+        table.string('email').unique();
+        table.string('password');
+        table.timestamps(true, true);
+      });
+    }
+
     console.log('✅ Database synced');
   } catch (error) {
-    console.error('Error syncing database:', error);
+    console.error('❌ Error syncing database:', error);
   }
 }
 
-// Export functions and sequelize instance
 module.exports = {
-  sequelize,
-  DataTypes,
+  db,
   registerModel,
   getModel,
   testConnection,
-  syncDatabase,
+  syncDatabase
 };
-
-
