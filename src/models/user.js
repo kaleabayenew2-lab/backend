@@ -1,67 +1,90 @@
-const { registerModel, DataTypes } = require('../config/db');
-
-// Define User model
-const User = registerModel('User', {
-  fullName: { type: DataTypes.STRING, allowNull: false },
-  email: { type: DataTypes.STRING, allowNull: false, unique: true },
-  passwordHash: { type: DataTypes.STRING, allowNull: false },
-  phone: DataTypes.STRING,
-  // Telegram linking
-  telegramChatId: DataTypes.STRING,
-  telegramUsername: DataTypes.STRING,
-  telegramPhone: DataTypes.STRING,
-  // device push tokens for FCM/APNs
-  deviceTokens: { type: DataTypes.JSON, defaultValue: [] },
-  // password reset OTP (6-digit) and expiry
-  resetOtp: DataTypes.STRING,
-  resetOtpExpires: DataTypes.DATE,
-  // login OTP (6-digit) for Telegram-based login and expiry
-  loginOtp: DataTypes.STRING,
-  loginOtpExpires: DataTypes.DATE,
-  age: DataTypes.INTEGER,
-  // Saved facility references for quick access
-  savedFacilities: { type: DataTypes.JSON, defaultValue: [] },
-  // Basic medical profile fields
-  medicalConditions: { type: DataTypes.JSON, defaultValue: [] },
-  allergies: { type: DataTypes.JSON, defaultValue: [] },
-  medications: { type: DataTypes.JSON, defaultValue: [] },
-  systemId: { type: DataTypes.STRING, allowNull: false, unique: true },
-  userId: { type: DataTypes.STRING, allowNull: false, unique: true },
-  provider: { type: DataTypes.STRING, defaultValue: null },
-  createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
-  adminResetRequested: { type: DataTypes.BOOLEAN, defaultValue: false },
-  adminResetPassword: { type: DataTypes.STRING, defaultValue: null },
-  adminResetPasswordExpires: { type: DataTypes.DATE, defaultValue: null }
-});
-
-// Ensure email is stored lowercase and encrypted
+const knex = require('../config/db');
 const { encrypt, decrypt } = require('../utils/encryption');
 
-User.addHook('beforeSave', (user) => {
-  if (user.changed('email') && user.email) {
-    user.email = encrypt(user.email.toLowerCase());
-  }
-  if (user.changed('phone') && user.phone) {
-    user.phone = encrypt(user.phone);
-  }
-});
+const TABLE = 'users';
 
-// helper to decrypt fields when returning data to clients
-User.prototype.decryptFields = function () {
+// 🔒 Apply encryption before insert/update (replacement for beforeSave hook)
+function prepareUserData(data) {
+  const newData = { ...data };
+
+  if (newData.email) {
+    newData.email = encrypt(newData.email.toLowerCase());
+  }
+
+  if (newData.phone) {
+    newData.phone = encrypt(newData.phone);
+  }
+
+  return newData;
+}
+
+// 🔓 Decrypt after fetching (replacement for afterFind hook)
+function decryptUser(user) {
+  if (!user) return user;
+
   try {
-    if (this.email) this.email = decrypt(this.email);
-    if (this.phone) this.phone = decrypt(this.phone);
+    if (user.email) user.email = decrypt(user.email);
+    if (user.phone) user.phone = decrypt(user.phone);
   } catch (_) {}
-  return this;
-};
 
-// automatically decrypt fields when a document is loaded from the database
-User.addHook('afterFind', (users) => {
-  if (Array.isArray(users)) {
-    users.forEach(user => user.decryptFields());
-  } else if (users) {
-    users.decryptFields();
+  return user;
+}
+
+function decryptUsers(users) {
+  if (!Array.isArray(users)) return decryptUser(users);
+  return users.map(decryptUser);
+}
+
+module.exports = {
+  // Create user
+  async create(data) {
+    const prepared = prepareUserData(data);
+
+    const [id] = await knex(TABLE).insert(prepared);
+    return this.findById(id);
+  },
+
+  // Find all users
+  async findAll() {
+    const users = await knex(TABLE).select('*');
+    return decryptUsers(users);
+  },
+
+  // Find by ID
+  async findById(id) {
+    const user = await knex(TABLE)
+      .where({ id })
+      .first();
+
+    return decryptUser(user);
+  },
+
+  // Find by email (IMPORTANT: must encrypt before query)
+  async findByEmail(email) {
+    const encryptedEmail = encrypt(email.toLowerCase());
+
+    const user = await knex(TABLE)
+      .where({ email: encryptedEmail })
+      .first();
+
+    return decryptUser(user);
+  },
+
+  // Update user
+  async update(id, data) {
+    const prepared = prepareUserData(data);
+
+    await knex(TABLE)
+      .where({ id })
+      .update(prepared);
+
+    return this.findById(id);
+  },
+
+  // Delete user
+  async delete(id) {
+    return await knex(TABLE)
+      .where({ id })
+      .del();
   }
-});
-
-module.exports = User;
+};
