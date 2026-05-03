@@ -1,17 +1,18 @@
 const Facility = require('../models/facility');
 const FacilityStats = require('../models/facilityStats');
 const Ad = require('../models/ad');
-const { Op } = require('sequelize');
 
 async function generateAndPersistAds({ maxAds = 20, location } = {}) {
   // location: { lat, lng }
   const out = [];
 
   // Load facilities and stats
-  const facilities = await Facility.findAll({ where: { isActive: true } });
+  const facilities = await Facility.findAll();
+  const activeFacilities = facilities.filter(f => f.isActive);
   const statsMap = {};
-  const stats = await FacilityStats.findAll({ where: { facility: { [Op.in]: facilities.map(f => f.id) } } });
-  stats.forEach(s => { statsMap[String(s.facility)] = s; });
+  const stats = await FacilityStats.findAll();
+  const relevantStats = stats.filter(s => activeFacilities.some(f => f.id === s.facility));
+  relevantStats.forEach(s => { statsMap[String(s.facility)] = s; });
 
   // Popular services
   const freq = {};

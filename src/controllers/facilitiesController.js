@@ -1,6 +1,5 @@
 const Facility = require('../models/facility');
 const bcrypt = require('bcryptjs');
-const { Op } = require('sequelize');
 const serviceCatalog = require('../config/serviceCatalog');
 
 exports.list = async (req, res) => {
@@ -15,8 +14,12 @@ exports.list = async (req, res) => {
     // Note: Geospatial queries not supported in SQLite, skipping location filter
     // In a real implementation, you might use a different approach or keep MongoDB for this
 
-    const facilities = await Facility.findAll({ where, limit: 100 });
-    return res.json(facilities);
+    const facilities = await Facility.findAll();
+    if (type) {
+      const filtered = facilities.filter(f => f.type === type);
+      return res.json(filtered.slice(0, 100));
+    }
+    return res.json(facilities.slice(0, 100));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -47,29 +50,22 @@ exports.create = async (req, res) => {
     }
 
     // Check for existing facility name within the same type (case-insensitive)
-    const existing = await Facility.findOne({ 
-      where: { 
-        name: data.name,
-        type: data.type
-      } 
-    });
-    if (existing) {
+    const existing = await Facility.findByName(data.name);
+    if (existing && existing.type === data.type) {
       return res.status(409).json({ error: `${data.type} name already exists` });
     }
 
     // Check for existing email
-    const existingEmail = await Facility.findOne({ 
-      where: { 
-        email: data.email 
-      } 
-    });
+    const facilities = await Facility.findAll();
+    const existingEmail = facilities.find(f => f.email === data.email);
     if (existingEmail) {
       return res.status(409).json({ error: 'Email already exists' });
     }
 
     // If a username is provided, ensure it's unique
     if (data.username) {
-      const existingUser = await Facility.findOne({ where: { username: data.username } });
+      const facilities = await Facility.findAll();
+      const existingUser = facilities.find(f => f.username === data.username);
       if (existingUser) return res.status(409).json({ error: 'Username already exists' });
     }
 
@@ -109,7 +105,7 @@ exports.create = async (req, res) => {
     
     // Return facility with temporary password (only shown once)
     const response = {
-      ...facility.toJSON(),
+      ...facility,
       temporaryPassword: tempPassword
     };
     
@@ -117,9 +113,8 @@ exports.create = async (req, res) => {
   } catch (err) {
     console.error('Facility creation error:', err);
     // Handle duplicate key error
-    if (err && err.name === 'SequelizeUniqueConstraintError') {
-      const key = err.errors[0].path;
-      return res.status(409).json({ error: `${key} already exists` });
+    if (err && err.code === 'SQLITE_CONSTRAINT') {
+      return res.status(409).json({ error: 'Record already exists' });
     }
     res.status(400).json({ error: 'Bad request' });
   }
@@ -130,7 +125,8 @@ exports.login = async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'username and password required' });
-    const facility = await Facility.findOne({ where: { username: username } });
+    const facilities = await Facility.findAll();
+    const facility = facilities.find(f => f.username === username);
     if (!facility) return res.status(401).json({ error: 'Invalid credentials' });
     if (!facility.passwordHash) return res.status(401).json({ error: 'No password set for this facility' });
     const ok = await bcrypt.compare(password, facility.passwordHash);
@@ -146,12 +142,15 @@ exports.login = async (req, res) => {
 exports.get = async (req, res) => {
   try {
     const { id } = req.params;
-    // Use Sequelize syntax - try find by id or agentId
-    const facility = await Facility.findOne({ 
-      where: { 
-        [Op.or]: [{ id }, { agentId: id }] 
-      } 
-    });
+    // Find facility by ID or agentId
+    let facility;
+    if (!isNaN(id)) {
+      facility = await Facility.findById(parseInt(id));
+    }
+    if (!facility) {
+      const facilities = await Facility.findAll();
+      facility = facilities.find(f => f.agentId === id);
+    }
     if (!facility) return res.status(404).json({ error: 'Facility not found' });
     return res.json(facility);
   } catch (err) {
@@ -165,20 +164,24 @@ exports.get = async (req, res) => {
 exports.recordView = async (req, res) => {
   try {
     const { id } = req.params;
-    const facility = await Facility.findOne({ 
-      where: { 
-        [Op.or]: [{ id }, { agentId: id }] 
-      } 
-    });
+    // Find facility by ID or agentId
+    let facility;
+    if (!isNaN(id)) {
+      facility = await Facility.findById(parseInt(id));
+    }
+    if (!facility) {
+      const facilities = await Facility.findAll();
+      facility = facilities.find(f => f.agentId === id);
+    }
     if (!facility) return res.status(404).json({ error: 'Not found' });
     
-    // Update view counters using Sequelize
-    await facility.update({
-      viewsTotal: facility.viewsTotal + 1,
-      lastViewedAt: new Date()
-    });
+    // Update view counters
+    await Facility.incrementViews(facility.id);
     
-    return res.json({ ok: true, viewsTotal: facility.viewsTotal, lastViewedAt: facility.lastViewedAt });
+    // Get updated facility
+    const updated = await Facility.findById(facility.id);
+    
+    return res.json({ ok: true, viewsTotal: updated.viewsTotal, lastViewedAt: updated.lastViewedAt });
   } catch (err) {
     console.error('recordView error', err);
     return res.status(500).json({ error: 'Server error' });
@@ -193,22 +196,17 @@ exports.rate = async (req, res) => {
     const rating = Number(req.body.rating || 0);
     if (!Number.isFinite(rating) || rating <= 0) return res.status(400).json({ error: 'rating required' });
     
-    // Find facility using Sequelize
-    const f = await Facility.findOne({ where: { id } });
-    if (!f) return res.status(404).json({ error: 'Not found' });
+    // Find facility
+    const facility = await Facility.findById(parseInt(id));
+    if (!facility) return res.status(404).json({ error: 'Not found' });
     
     // Update aggregated rating fields
-    const newCount = (f.ratingCount || 0) + 1;
-    const newSum = (f.ratingSum || 0) + rating;
-    const avg = newSum / newCount;
+    await Facility.updateRating(facility.id, rating);
     
-    await f.update({
-      ratingCount: newCount,
-      ratingSum: newSum,
-      averageRating: Math.round((avg + Number.EPSILON) * 100) / 100
-    });
+    // Get updated facility
+    const updated = await Facility.findById(facility.id);
     
-    return res.json({ ok: true, ratingCount: f.ratingCount, averageRating: f.averageRating });
+    return res.json({ ok: true, ratingCount: updated.ratingCount, averageRating: updated.averageRating });
   } catch (err) {
     console.error('rate error', err);
     return res.status(500).json({ error: 'Server error' });
@@ -226,22 +224,14 @@ exports.update = async (req, res) => {
     }
     // If updating name, ensure uniqueness
     if (data.name) {
-      const existing = await Facility.findOne({ 
-        where: { 
-          id: { [Op.ne]: id }, 
-          name: data.name 
-        } 
-      });
+      const facilities = await Facility.findAll();
+      const existing = facilities.find(f => f.name === data.name && f.id !== parseInt(id));
       if (existing) return res.status(409).json({ error: 'Facility name already exists' });
     }
     // If updating username, ensure it's unique
     if (data.username) {
-      const existingUser = await Facility.findOne({ 
-        where: { 
-          id: { [Op.ne]: id }, 
-          username: data.username 
-        } 
-      });
+      const facilities = await Facility.findAll();
+      const existingUser = facilities.find(f => f.username === data.username && f.id !== parseInt(id));
       if (existingUser) return res.status(409).json({ error: 'Username already exists' });
     }
     // If password provided, hash it
@@ -251,17 +241,15 @@ exports.update = async (req, res) => {
       delete data.password;
     }
     
-    // Find and update facility using Sequelize
-    const facility = await Facility.findOne({ where: { id } });
+    // Find and update facility
+    const facility = await Facility.update(parseInt(id), data);
     if (!facility) return res.status(404).json({ error: 'Not found' });
     
-    await facility.update(data);
     return res.json(facility);
   } catch (err) {
     console.error('facility update error', err);
-    if (err && err.name === 'SequelizeUniqueConstraintError') {
-      const key = err.errors[0].path;
-      return res.status(409).json({ error: `${key} already exists` });
+    if (err && err.code === 'SQLITE_CONSTRAINT') {
+      return res.status(409).json({ error: 'Record already exists' });
     }
     return res.status(400).json({ error: 'Bad request' });
   }
@@ -287,14 +275,14 @@ exports.resetPassword = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(String(password), salt);
 
-    // Find and update facility using Sequelize
-    const facility = await Facility.findOne({ where: { id } });
+    // Find and update facility
+    const facility = await Facility.findById(parseInt(id));
     if (!facility) {
       try { console.warn(`resetPassword: facility not found for id=${id}`); } catch (e) {}
       return res.status(404).json({ error: 'Not found' });
     }
 
-    await facility.update({ passwordHash });
+    await Facility.update(parseInt(id), { passwordHash });
 
     // Log outcome for operator visibility; optionally reveal plaintext when DEBUG_PASSWORDS=true
     try {
@@ -353,7 +341,7 @@ exports.verifyPassword = async (req, res) => {
     }
     
     // Find facility by ID
-    const facility = await Facility.findOne({ where: { id } });
+    const facility = await Facility.findById(parseInt(id));
     if (!facility) {
       return res.status(404).json({ error: 'Facility not found' });
     }
@@ -381,13 +369,11 @@ exports.checkName = async (req, res) => {
     const { name, type } = req.query;
     if (!name) return res.status(400).json({ error: 'name parameter required' });
     
-    // Use Sequelize syntax - case-insensitive search
-    const existing = await Facility.findOne({ 
-      where: { 
-        name: name,
-        ...(type && { type: type })
-      }
-    });
+    // Use case-insensitive search
+    const existing = await Facility.findByName(name);
+    if (type && existing && existing.type !== type) {
+      return res.json({ exists: false });
+    }
     
     return res.json({ exists: !!existing });
   } catch (err) {
@@ -402,12 +388,9 @@ exports.checkEmail = async (req, res) => {
     const { email } = req.query;
     if (!email) return res.status(400).json({ error: 'email parameter required' });
     
-    // Use Sequelize syntax - case-insensitive search
-    const existing = await Facility.findOne({ 
-      where: { 
-        email: email.trim()
-      }
-    });
+    // Use case-insensitive search
+    const facilities = await Facility.findAll();
+    const existing = facilities.find(f => f.email === email.trim());
     
     return res.json({ 
       exists: !!existing,
@@ -431,12 +414,9 @@ exports.checkPhone = async (req, res) => {
       normalizedPhone = `+251${phone}`;
     }
     
-    // Use Sequelize syntax - exact match
-    const existing = await Facility.findOne({ 
-      where: { 
-        phone: normalizedPhone
-      }
-    });
+    // Use exact match
+    const facilities = await Facility.findAll();
+    const existing = facilities.find(f => f.phone === normalizedPhone);
     
     return res.json({ 
       exists: !!existing,

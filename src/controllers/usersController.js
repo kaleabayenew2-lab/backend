@@ -129,11 +129,9 @@ exports.register = async (req, res) => {
     res.status(201).json(out);
   } catch (err) {
     console.error('register error', err);
-    // Handle duplicate key errors from Sequelize
-    if (err && err.name === 'SequelizeUniqueConstraintError') {
-      const field = err.errors[0].path;
-      const value = err.errors[0].value;
-      return res.status(409).json({ message: `${field} already registered`, field, value });
+    // Handle duplicate key errors from SQLite
+    if (err && err.code === 'SQLITE_CONSTRAINT') {
+      return res.status(409).json({ message: 'Record already exists' });
     }
     res.status(500).json({ message: 'Server error' });
   }

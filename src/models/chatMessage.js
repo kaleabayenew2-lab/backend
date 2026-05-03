@@ -1,19 +1,61 @@
-const { registerModel, DataTypes } = require('../config/db');
+const { db } = require('../config/db');
 
-// Define ChatMessage model
-const ChatMessage = registerModel('ChatMessage', {
-  conversationId: { type: DataTypes.STRING },
-  from: { type: DataTypes.STRING, allowNull: false }, // user id or 'bot' or facility id
-  to: DataTypes.STRING, // recipient id
-  text: DataTypes.STRING,
-  attachments: { type: DataTypes.JSON, defaultValue: [] },
-  meta: { type: DataTypes.JSON, defaultValue: {} },
-  read: { type: DataTypes.BOOLEAN, defaultValue: false },
-  createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
-}, {
-  indexes: [
-    { fields: ['conversationId'] }
-  ]
-});
+// ChatMessage model using Knex
+class ChatMessage {
+  static async createTable() {
+    const exists = await db.schema.hasTable('chatMessages');
+    if (!exists) {
+      await db.schema.createTable('chatMessages', (table) => {
+        table.increments('id').primary();
+        table.string('conversationId');
+        table.string('from').notNullable();
+        table.string('to');
+        table.string('text');
+        table.json('attachments').defaultTo(JSON.stringify([]));
+        table.json('meta').defaultTo(JSON.stringify({}));
+        table.boolean('read').defaultTo(false);
+        table.datetime('createdAt').defaultTo(db.fn.now());
+        table.timestamps(true, true);
+        table.index('conversationId');
+      });
+      console.log('✅ ChatMessages table created');
+    }
+  }
+
+  static async create(data) {
+    const [id] = await db('chatMessages').insert(data);
+    return this.findById(id);
+  }
+
+  static async findById(id) {
+    return await db('chatMessages').where({ id }).first();
+  }
+
+  static async findAll() {
+    return await db('chatMessages').select('*');
+  }
+
+  static async update(id, data) {
+    await db('chatMessages').where({ id }).update(data);
+    return this.findById(id);
+  }
+
+  static async delete(id) {
+    return await db('chatMessages').where({ id }).del();
+  }
+
+  static async findByConversation(conversationId) {
+    return await db('chatMessages').where({ conversationId }).orderBy('createdAt', 'asc');
+  }
+
+  static async findByUser(userId, limit = 200) {
+    return await db('chatMessages')
+      .where(function() {
+        this.where('from', userId).orWhere('to', userId);
+      })
+      .orderBy('createdAt', 'desc')
+      .limit(limit);
+  }
+}
 
 module.exports = ChatMessage;

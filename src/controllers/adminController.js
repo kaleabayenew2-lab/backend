@@ -405,12 +405,25 @@ exports.getMostViewed = async (req, res) => {
 exports.getTopRated = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit, 10) || 50;
-    const items = await Facility.findAll({
-      where: { ratingCount: { [require('sequelize').Op.gt]: 0 } },
-      order: [['averageRating', 'DESC'], ['ratingCount', 'DESC']],
-      limit: limit,
-      attributes: ['name', 'type', 'address', 'phone', 'viewsTotal', 'averageRating', 'ratingCount']
-    });
+    const facilities = await Facility.findAll();
+    const items = facilities
+      .filter(f => f.ratingCount > 0)
+      .sort((a, b) => {
+        if (b.averageRating !== a.averageRating) {
+          return b.averageRating - a.averageRating;
+        }
+        return b.ratingCount - a.ratingCount;
+      })
+      .slice(0, limit)
+      .map(f => ({
+        name: f.name,
+        type: f.type,
+        address: f.address,
+        phone: f.phone,
+        viewsTotal: f.viewsTotal,
+        averageRating: f.averageRating,
+        ratingCount: f.ratingCount
+      }));
     return res.json({ items });
   } catch (err) {
     console.error('getTopRated error', err);

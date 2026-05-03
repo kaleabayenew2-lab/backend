@@ -151,31 +151,17 @@ exports.listByUser = async (req, res) => {
     try {
     const { userId, limit = 200 } = req.query;
     const lim = parseInt(limit, 10) || 200;
-    const { Op } = require('sequelize');
-    
+        
     if (!userId) {
       // return recent messages across system (most recent `limit` messages)
-      const msgs = await ChatMessage.findAll({ 
-        order: [['createdAt', 'DESC']], 
-        limit: lim 
-      });
+      const msgs = await ChatMessage.findAll();
+      const limited = msgs.slice(-lim);
       // return in chronological order
-      return res.json((msgs || []).reverse());
+      return res.json(limited.reverse());
     }
-    // include messages where from/to match userId or where meta fields reference the user
-    const msgs = await ChatMessage.findAll({
-      where: {
-        [Op.or]: [
-          { from: userId },
-          { to: userId },
-          // For JSON fields in Sequelize, we need to use different approach
-          // This is a simplified version - meta JSON queries need proper Sequelize JSON operators
-        ]
-      },
-      order: [['createdAt', 'ASC']], 
-      limit: lim
-    });
-    return res.json(msgs);
+    // include messages where from/to match userId
+    const msgs = await ChatMessage.findByUser(userId, lim);
+    return res.json(msgs.reverse());
   } catch (err) {
     console.error('chat list error', err);
     return res.status(500).json({ error: 'Server error' });
