@@ -98,6 +98,15 @@ module.exports = {
     return decryptUser(user);
   },
 
+  // Find user by any field
+  async findOne(where) {
+    const user = await db(TABLE)
+      .where(where)
+      .first();
+
+    return decryptUser(user);
+  },
+
   // Find by email (IMPORTANT: must encrypt before query)
   async findByEmail(email) {
     const encryptedEmail = encrypt(email.toLowerCase());
