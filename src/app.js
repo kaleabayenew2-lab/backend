@@ -160,9 +160,27 @@ io.on('connection', (socket) => {
 // Initialize database
 db.testConnection().then(async () => {
   await db.syncDatabase();
-  await Facility.createTable();
-  await User.createTable();
-  await ChatMessage.createTable();
+  try {
+    await Facility.createTable();
+  } catch (err) {
+    if (!err.message.includes('already exists')) {
+      console.error('❌ Error creating facilities table:', err);
+    }
+  }
+  try {
+    await User.createTable();
+  } catch (err) {
+    if (!err.message.includes('already exists')) {
+      console.error('❌ Error creating users table:', err);
+    }
+  }
+  try {
+    await ChatMessage.createTable();
+  } catch (err) {
+    if (!err.message.includes('already exists')) {
+      console.error('❌ Error creating chatMessages table:', err);
+    }
+  }
 });
 
 // Initialize email service
