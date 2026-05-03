@@ -7,7 +7,7 @@ const path = require('path');
 
 const app = express();
 // Configure CORS to allow the frontend origin and credentials when required
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://admin-lpya.onrender.com';
 app.use(cors({ origin: FRONTEND_ORIGIN, credentials: true }));
 app.use(helmet());
 
