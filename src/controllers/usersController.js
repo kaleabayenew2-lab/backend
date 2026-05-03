@@ -46,10 +46,10 @@ async function ensureUniqueIds() {
   let systemId = crypto.randomUUID();
   let userId = generateUserId();
   // if collision, retry (extremely unlikely)
-  while (await User.findOne({ where: { systemId } })) {
+  while (await User.findOne({ systemId })) {
     systemId = crypto.randomUUID();
   }
-  while (await User.findOne({ where: { userId } })) {
+  while (await User.findOne({ userId })) {
     userId = generateUserId();
   }
   return { systemId, userId };
