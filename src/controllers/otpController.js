@@ -7,7 +7,7 @@ const otpStore = new Map();
 
 // Generate 6-digit OTP
 function generateOtp() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return Math.floor(100000 + Math.random()  * 900000).toString();
 }
 
 // Send OTP via email
@@ -108,7 +108,16 @@ async function sendOTP(req, res) {
     // Send OTP via email service
     let emailResult = { success: false };
     if (method === 'email') {
-      emailResult = await sendOTPEmail(identifier, otp, facilityName || 'Facility');
+      // Fix: Send proper parameters to sendOTPEmail
+      const emailSubject = 'Your OTP Verification Code';
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; padding: 20px;">
+          <h2>Your OTP Code: ${otp}</h2>
+          <p>This code expires in 10 minutes.</p>
+          <p>Facility: ${facilityName || 'Facility'}</p>
+        </div>
+      `;
+      emailResult = await sendOTPEmail(identifier, emailSubject, emailHtml);
     }
 
     res.status(200).json({
@@ -182,7 +191,7 @@ async function verifyOTP(req, res) {
 }
 
 // Send OTP for registration
-exports.sendRegistrationOtp = async (req, res) => {
+const sendRegistrationOtp = async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -201,10 +210,21 @@ exports.sendRegistrationOtp = async (req, res) => {
       attempts: 0,
     });
 
-    // Send email
-    const emailSent = await sendOtpEmail(email, otp);
+    // Send email using the correct function signature
+    const subject = 'FindMe - Registration OTP';
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2>Welcome to FindMe!</h2>
+        <p>Your registration OTP is: <strong style="font-size: 24px;">${otp}</strong></p>
+        <p>This code expires in 10 minutes.</p>
+        <p>Please use this code to complete your registration.</p>
+      </div>
+    `;
 
-    if (emailSent) {
+    await initializeEmailService();
+    const emailResult = await sendOTPEmail(email, subject, html);
+
+    if (emailResult && emailResult.success) {
       res.json({ 
         success: true, 
         message: 'OTP sent successfully',
@@ -226,7 +246,7 @@ exports.sendRegistrationOtp = async (req, res) => {
 };
 
 // Verify OTP for registration
-exports.verifyRegistrationOtp = async (req, res) => {
+const verifyRegistrationOtp = async (req, res) => {
   try {
     const { email, otp, fullName, age, phone, password } = req.body;
 
@@ -273,35 +293,44 @@ exports.verifyRegistrationOtp = async (req, res) => {
       });
     }
 
-    // OTP is valid - remove it from store and create user
+    // OTP is valid - remove it from store
     otpStore.delete(email);
 
-    // Import User model to create the user
-    const User = require('../models/user');
+    // If registration data is provided, create user
+    if (fullName && age && password && phone) {
+      // Import User model to create the user
+      const User = require('../models/user');
 
-    try {
-      const newUser = await User.create({
-        fullName,
-        age: parseInt(age),
-        email,
-        password,
-        phone,
-      });
+      try {
+        const newUser = await User.create({
+          fullName,
+          age: parseInt(age),
+          email,
+          password,
+          phone,
+        });
 
+        res.json({ 
+          success: true, 
+          message: 'Registration successful!',
+          user: {
+            id: newUser.id,
+            fullName: newUser.fullName,
+            email: newUser.email,
+          }
+        });
+      } catch (userError) {
+        console.error('User creation error:', userError);
+        res.status(500).json({ 
+          success: false, 
+          message: 'Failed to create user account' 
+        });
+      }
+    } else {
+      // Just verify OTP without creating user
       res.json({ 
         success: true, 
-        message: 'Registration successful!',
-        user: {
-          id: newUser.id,
-          fullName: newUser.fullName,
-          email: newUser.email,
-        }
-      });
-    } catch (userError) {
-      console.error('User creation error:', userError);
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to create user account' 
+        message: 'OTP verified successfully' 
       });
     }
 
