@@ -78,6 +78,8 @@ module.exports = {
   // Create user
   async create(data) {
     const prepared = prepareUserData(data);
+    // Add updatedAt for Knex timestamps
+    prepared.updatedAt = new Date();
 
     const [id] = await db(TABLE).insert(prepared);
     return this.findById(id);
