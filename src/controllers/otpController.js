@@ -2,6 +2,59 @@
 const { connectToDatabase, initializeDatabase } = require('../database/connection');
 const { initializeEmailService, sendOTPEmail } = require('../services/emailService');
 
+// Store OTPs in memory (in production, use Redis or database)
+const otpStore = new Map();
+
+// Generate 6-digit OTP
+function generateOtp() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+// Send OTP via email
+async function sendOtpEmail(email, otp) {
+  try {
+    // Use existing email service
+    const subject = 'FindMe - Verify Your Email';
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 15px; text-align: center; color: white;">
+          <h1 style="margin: 0; font-size: 28px; font-weight: bold;">🔐 Email Verification</h1>
+          <p style="margin: 10px 0; font-size: 16px;">Welcome to FindMe!</p>
+        </div>
+        
+        <div style="background: #f8f9fa; padding: 30px; border-radius: 15px; margin: 20px 0;">
+          <h2 style="color: #333; margin-top: 0;">Your Verification Code</h2>
+          <div style="background: #fff; border: 2px dashed #ddd; padding: 20px; border-radius: 10px; margin: 20px 0;">
+            <span style="font-size: 32px; font-weight: bold; color: #667eea; letter-spacing: 8px; text-align: center; display: block;">
+              ${otp}
+            </span>
+          </div>
+          
+          <div style="background: #e3f2fd; padding: 15px; border-radius: 10px; margin: 20px 0;">
+            <p style="margin: 0; color: #333; font-weight: bold;">⏰ This code expires in 10 minutes</p>
+          </div>
+          
+          <div style="text-align: center; margin-top: 30px;">
+            <p style="color: #666; font-size: 14px;">If you didn't request this code, please ignore this email.</p>
+            <p style="color: #666; font-size: 14px;">For support, contact us at support@findme.com</p>
+          </div>
+        </div>
+        
+        <div style="text-align: center; margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 15px;">
+          <p style="margin: 0; color: #666; font-size: 12px;">© 2024 FindMe. All rights reserved.</p>
+        </div>
+      </div>
+    `;
+
+    await initializeEmailService();
+    const result = await sendOTPEmail(email, subject, html);
+    return result.success;
+  } catch (error) {
+    console.error('Email sending error:', error);
+    return false;
+  }
+}
+
 // Send OTP
 async function sendOTP(req, res) {
   try {
@@ -128,7 +181,142 @@ async function verifyOTP(req, res) {
   }
 }
 
+// Send OTP for registration
+exports.sendRegistrationOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    const otp = generateOtp();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Store OTP
+    otpStore.set(email, {
+      otp,
+      expiresAt,
+      purpose: 'registration',
+      attempts: 0,
+    });
+
+    // Send email
+    const emailSent = await sendOtpEmail(email, otp);
+
+    if (emailSent) {
+      res.json({ 
+        success: true, 
+        message: 'OTP sent successfully',
+        expiresIn: '10 minutes'
+      });
+    } else {
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to send OTP email' 
+      });
+    }
+  } catch (error) {
+    console.error('Send registration OTP error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error' 
+    });
+  }
+};
+
+// Verify OTP for registration
+exports.verifyRegistrationOtp = async (req, res) => {
+  try {
+    const { email, otp, fullName, age, phone, password } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({ message: 'Email and OTP are required' });
+    }
+
+    const storedData = otpStore.get(email);
+
+    if (!storedData) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'OTP not found or expired' 
+      });
+    }
+
+    // Check expiration
+    if (new Date() > storedData.expiresAt) {
+      otpStore.delete(email);
+      return res.status(400).json({ 
+        success: false, 
+        message: 'OTP has expired' 
+      });
+    }
+
+    // Check attempts
+    if (storedData.attempts >= 3) {
+      otpStore.delete(email);
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Too many attempts. Please request a new OTP.' 
+      });
+    }
+
+    // Verify OTP
+    if (storedData.otp !== otp) {
+      otpStore.set(email, {
+        ...storedData,
+        attempts: storedData.attempts + 1,
+      });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid OTP' 
+      });
+    }
+
+    // OTP is valid - remove it from store and create user
+    otpStore.delete(email);
+
+    // Import User model to create the user
+    const User = require('../models/user');
+
+    try {
+      const newUser = await User.create({
+        fullName,
+        age: parseInt(age),
+        email,
+        password,
+        phone,
+      });
+
+      res.json({ 
+        success: true, 
+        message: 'Registration successful!',
+        user: {
+          id: newUser.id,
+          fullName: newUser.fullName,
+          email: newUser.email,
+        }
+      });
+    } catch (userError) {
+      console.error('User creation error:', userError);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to create user account' 
+      });
+    }
+
+  } catch (error) {
+    console.error('Verify registration OTP error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error' 
+    });
+  }
+};
+
 module.exports = {
   sendOTP,
-  verifyOTP
+  verifyOTP,
+  sendRegistrationOtp,
+  verifyRegistrationOtp
 };
