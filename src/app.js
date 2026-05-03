@@ -9,7 +9,7 @@ const socketIo = require('socket.io');
 
 // Import database and models
 const db = require('./config/db');
-require('./models/facility');
+const Facility = require('./models/facility');
 
 // Import and initialize email service
 const { initializeEmailService } = require('./services/emailService');
@@ -156,7 +156,10 @@ io.on('connection', (socket) => {
 });
 
 // Initialize database
-db.testConnection().then(() => db.syncDatabase());
+db.testConnection().then(async () => {
+  await db.syncDatabase();
+  await Facility.createTable();
+});
 
 // Initialize email service
 initializeEmailService().then(() => {
