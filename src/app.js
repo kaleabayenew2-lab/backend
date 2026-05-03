@@ -20,7 +20,7 @@ const { initializeEmailService } = require('./services/emailService');
 const facilityRoutes = require('./routes/facilities');
 const otpRoutes = require('./routes/otpRoutes');
 const adminRoutes = require('./routes/adminRoutes');
-const usersRoutes = require('./routes/usersRoutes');
+const usersRoutes = require('./routes/users');
 const notificationsRoutes = require('./routes/notificationsRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 
