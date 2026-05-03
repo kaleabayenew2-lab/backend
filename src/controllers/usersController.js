@@ -3,10 +3,9 @@ exports.requestAdminReset = async (req, res) => {
   try {
     const { email } = req.body || {};
     if (!email) return res.status(400).json({ message: 'email required' });
-    const u = await User.findOne({ where: { email: String(email).toLowerCase() } });
+    const u = await User.findByEmail(String(email).toLowerCase());
     if (!u) return res.status(404).json({ message: 'User not found' });
-    u.adminResetRequested = true;
-    await u.save();
+    await User.update(u.id, { adminResetRequested: true });
     // In a real app, notify admin (email, dashboard, etc). For now, just return ok.
     return res.json({ ok: true });
   } catch (err) {
@@ -82,7 +81,7 @@ exports.register = async (req, res) => {
     }
 
     const emailLower = resolvedEmail.toLowerCase();
-    const existing = await User.findOne({ where: { email: emailLower } });
+    const existing = await User.findByEmail(emailLower);
     if (existing) return res.status(409).json({ message: 'Email already registered' });
 
     // If phone provided, validate Ethiopian E.164 format and check for existing phone to avoid duplicate-key DB error
@@ -91,7 +90,8 @@ exports.register = async (req, res) => {
       if (!phoneRegex.test(String(phone))) {
         return res.status(400).json({ message: 'Phone must be in format +251 followed by 9 digits (Ethiopia)' });
       }
-      const existingPhone = await User.findOne({ where: { phone: phone } });
+      const allUsers = await User.findAll();
+      const existingPhone = allUsers.find(u => u.phone === phone);
       if (existingPhone) return res.status(409).json({ message: 'Phone already registered', field: 'phone', value: phone });
     }
 
