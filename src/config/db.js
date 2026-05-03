@@ -36,18 +36,7 @@ function getModel(name) {
 // Sync database (create tables manually)
 async function syncDatabase() {
   try {
-    const exists = await db.schema.hasTable('users');
-
-    if (!exists) {
-      await db.schema.createTable('users', (table) => {
-        table.increments('id').primary();
-        table.string('name');
-        table.string('email').unique();
-        table.string('password');
-        table.timestamps(true, true);
-      });
-    }
-
+    // Don't create basic users table anymore - models handle their own tables
     console.log('✅ Database synced');
   } catch (error) {
     console.error('❌ Error syncing database:', error);
