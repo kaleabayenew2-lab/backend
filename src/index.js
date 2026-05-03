@@ -144,7 +144,7 @@ try {
   const { Server } = require('socket.io');
   socketManager = require('./utils/socketManager');
   notificationsController = require('./controllers/notificationsController');
-  const io = new Server(server, { cors: { origin: '*' } });
+  const io = new Server(server, { cors: { origin: FRONTEND_ORIGIN, credentials: true } });
   socketManager.init(io);
   // log socket connections for debugging
   io.on('connect', (socket) => {
