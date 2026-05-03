@@ -312,7 +312,6 @@ exports.verifyRegistrationOtp = async (req, res) => {
       message: 'Server error' 
     });
   }
-}
 };
 
 module.exports = {
