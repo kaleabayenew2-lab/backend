@@ -455,7 +455,7 @@ exports.getSavedFacilities = async (req, res) => {
   try {
     const { id } = req.params;
     if (!id) return res.status(400).json({ message: 'Missing id' });
-    const u = await User.findById(id).populate('savedFacilities');
+    const u = await User.findById(id);
     if (!u) return res.status(404).json({ message: 'User not found' });
     return res.json({ saved: u.savedFacilities || [] });
   } catch (err) {
